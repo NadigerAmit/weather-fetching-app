@@ -13,7 +13,7 @@ If you want to learn how to use weather_app, please follow below:
 ```sh
 # Clone to repository
 git clone https://github.com/NadigerAmit/weather-fetching-app.git
-cd weather_app
+cd weather-fetching-app
 
 # Build the code in release mode 
 # Replace <city_name> with the name of the city for which you want to fetch weather information.
