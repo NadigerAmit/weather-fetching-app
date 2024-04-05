@@ -1,36 +1,38 @@
+// main.rs
+
+mod api;
+mod weather_model;
+
 use anyhow::{anyhow, Result};
+use prettytable::{row, Table};
 use reqwest::{header, Client};
-use serde::Deserialize;
 use std::env;
+use weather_model::{GeoData, WeatherData};
 
-#[derive(Debug, Deserialize)]
-struct WeatherData {
-    current_weather: CurrentWeather,
-}
+#[tokio::main]
+async fn main() -> Result<()> {
+    let args: Vec<String> = env::args().collect();
+    if args.len() != 2 {
+        eprintln!("Usage: {} <city>", args[0]);
+        return Ok(());
+    }
+    let city = &args[1];
 
-#[derive(Debug, Deserialize)]
-struct CurrentWeather {
-    temperature: f64,
-    windspeed: f64,
-    winddirection: i32,
-}
+    let geo_data = fetch_geo_data(city).await?;
+    let weather_data = fetch_weather(&geo_data).await?;
 
-#[derive(Debug, Deserialize, Clone)]
-struct GeoData {
-    lat: String,
-    lon: String,
+    print_weather_table(city, &geo_data, &weather_data);
+
+    Ok(())
 }
 
 async fn fetch_geo_data(city: &str) -> Result<GeoData> {
-    let client: Client = Client::new();
     let encoded_city = urlencoding::encode(city);
-    let url = format!(
-        "https://nominatim.openstreetmap.org/search?q={}&format=json",
-        encoded_city
-    );
+    let url = format!("{}?q={}&format=json", api::NOMINATIM_API, encoded_city);
+    let client = Client::new();
     let response = client
         .get(&url)
-        .header(header::USER_AGENT, "weather_app")
+        .header(header::USER_AGENT, "WhetherFetchingApp")
         .send()
         .await?;
 
@@ -50,59 +52,30 @@ async fn fetch_geo_data(city: &str) -> Result<GeoData> {
     }
 }
 
-async fn fetch_weather(latitude: f64, longitude: f64) -> Result<WeatherData> {
-    let client: Client = Client::new();
-    let url = format!("https://api.open-meteo.com/v1/forecast/?latitude={}&longitude={}&current_weather=true&hourly=temperature_2m,relativehumidity_2m,windspeed_10m", latitude, longitude);
-    let response = client.get(&url).send().await?;
+async fn fetch_weather(geo_data: &GeoData) -> Result<WeatherData> {
+    let url = format!(
+        "{}?latitude={}&longitude={}&current_weather=true&hourly=temperature_2m,relativehumidity_2m,windspeed_10m",
+        api::OPEN_METEO_API, geo_data.lat, geo_data.lon
+    );
+    let response = reqwest::get(&url).await?;
     let weather_data = response.json().await?;
     Ok(weather_data)
 }
 
-#[tokio::main]
-async fn main() {
-    let args: Vec<String> = env::args().collect();
-    if args.len() != 2 {
-        eprintln!("Usage: {} <city>", args[0]);
-        return;
-    }
-    let city = &args[1];
+fn print_weather_table(city: &str, geo_data: &GeoData, weather_data: &WeatherData) {
+    let mut table = Table::new();
 
-    match fetch_geo_data(city).await {
-        Ok(geo_data) => {
-            println!("City: {}", city);
-            println!("Latitude: {}", geo_data.lat);
-            println!("Longitude: {}", geo_data.lon);
+    //Adding headers to table
+    table.add_row(row![bFg->"City", bFg->"Latitude", bFg->"Longitude"]);
+    table.add_row(row![city, geo_data.lat, geo_data.lon]);
 
-            if let Ok(lat) = geo_data.lat.parse::<f64>() {
-                if let Ok(lon) = geo_data.lon.parse::<f64>() {
-                    match fetch_weather(lat, lon).await {
-                        Ok(weather_data) => {
-                            println!(
-                                "Current Temperature: {}°C",
-                                weather_data.current_weather.temperature
-                            );
-                            println!(
-                                "Current Wind Speed: {} km/h",
-                                weather_data.current_weather.windspeed
-                            );
-                            println!(
-                                "Current Wind Direction: {}°",
-                                weather_data.current_weather.winddirection
-                            );
-                        }
-                        Err(e) => {
-                            eprintln!("Error fetching weather: {}", e);
-                        }
-                    }
-                } else {
-                    eprintln!("Error parsing longitude to f64");
-                }
-            } else {
-                eprintln!("Error parsing latitude to f64");
-            }
-        }
-        Err(e) => {
-            eprintln!("Error fetching city data: {}", e);
-        }
-    }
+    // Adding weather data to the table
+    table.add_row(row![bFg->"Current Temperature (°C)", bFg->"Current Wind Speed (km/h)", bFg->"Current Wind Direction (°)"]);
+    table.add_row(row![
+        weather_data.current_weather.temperature,
+        weather_data.current_weather.windspeed,
+        weather_data.current_weather.winddirection
+    ]);
+
+    table.printstd();
 }
